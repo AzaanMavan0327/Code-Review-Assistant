@@ -1,0 +1,42 @@
+# Continuous Integration workflow.
+#
+# This runs automatically on every push and pull request. It installs the
+# project's dependencies and runs the full test suite. If any test fails,
+# the workflow fails and GitHub shows a red X, so problems are caught early.
+#
+# The green "passing" badge you can put in your README comes from this file.
+
+name: CI
+
+# When to run this workflow.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: check out the repository code so the workflow can access it.
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      # Step 2: install Python. We use 3.11 to match local development.
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # Step 3: install project dependencies, including test tools.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      # Step 4: run the test suite. If any test fails, this step fails
+      # and the whole workflow is marked as failed.
+      - name: Run tests
+        run: pytest
