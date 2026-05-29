@@ -1,0 +1,13 @@
+@@ -1,5 +1,7 @@
+ import os
++import sys
++import json
+
+ def main():
+-    pass
++    return os.getcwd()
+@@ -20,3 +22,5 @@ def helper():
+     return result
+
++def new_helper():
++    return None
