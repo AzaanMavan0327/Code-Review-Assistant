@@ -15,9 +15,12 @@ The pipeline:
   3. For each changed Python file, fetch the full file contents.
   4. Run the static analyzer on each file.
   5. Filter findings to only those on changed lines.
+
+The result includes the source code we fetched, so downstream consumers
+(like the LLM reviewer) don't have to re-fetch the same files.
 """
 
-from typing import Callable, List, Optional
+from typing import Callable, Dict, List, Optional
 
 from src.analyzer.analyzer import CodeAnalyzer
 from src.analyzer.base import Finding
@@ -26,7 +29,6 @@ from src.github.diff_parser import annotate_pull_request
 
 
 # Type alias for the progress callback. Takes a status message string.
-# Returning nothing keeps the contract simple. Tests can pass None.
 ProgressCallback = Callable[[str], None]
 
 
@@ -34,9 +36,9 @@ class ReviewResult:
     """
     Result of reviewing a pull request.
 
-    Bundles the findings together with some metadata about the PR, so
-    callers (CLI, GitHub Action) can show useful context without having
-    to fetch the PR data again.
+    Bundles findings together with metadata about the PR and the source
+    code we fetched, so callers (CLI, GitHub Action, LLM enrichment)
+    don't need to re-fetch anything.
     """
 
     def __init__(
@@ -45,11 +47,16 @@ class ReviewResult:
         files_analyzed: int,
         files_skipped: int,
         findings: List[Finding],
+        source_by_file: Optional[Dict[str, str]] = None,
     ) -> None:
         self.pr_title = pr_title
         self.files_analyzed = files_analyzed
         self.files_skipped = files_skipped
         self.findings = findings
+        # Maps file path -> full source text. Used by LLM enrichment to
+        # extract code context around each finding. Defaults to {} so
+        # tests written before this field was added still work.
+        self.source_by_file = source_by_file or {}
 
 
 def review_pull_request(
@@ -65,20 +72,15 @@ def review_pull_request(
     Args:
         client: GitHubClient used for all API calls.
         owner, repo, number: identifies the pull request.
-        progress: optional callback invoked with status messages. Lets the
-                  CLI print progress without coupling this module to stdout.
-                  If None, the pipeline runs silently.
+        progress: optional callback invoked with status messages.
 
     Returns:
         A ReviewResult containing all findings on changed lines.
 
     Raises:
         GitHubAPIError: if the PR cannot be fetched at all. Per-file errors
-                        are caught internally and result in skipped files
-                        rather than aborting the entire review.
+                        are caught internally and result in skipped files.
     """
-    # Helper that quietly does nothing if no callback was provided.
-    # Avoids `if progress: progress(...)` scattered everywhere.
     def report(msg: str) -> None:
         if progress is not None:
             progress(msg)
@@ -94,22 +96,18 @@ def review_pull_request(
             files_analyzed=0,
             files_skipped=0,
             findings=[],
+            source_by_file={},
         )
 
-    # Annotate every file with the set of line numbers that changed.
-    # We do this in one pass before fetching contents, because the diff
-    # parsing is cheap and lets us skip files where nothing changed
-    # (e.g., a renamed file with no content edits).
     pr = annotate_pull_request(pr)
 
     analyzer = CodeAnalyzer()
     all_findings: List[Finding] = []
+    source_by_file: Dict[str, str] = {}
     files_analyzed = 0
     files_skipped = 0
 
     for changed_file in pr.python_files:
-        # If a file's diff is empty (rename only, binary, etc.), there are
-        # no changed lines to report on, so skip without fetching contents.
         if not changed_file.changed_lines:
             report(f"Skipping {changed_file.filename} (no changed lines)")
             files_skipped += 1
@@ -122,8 +120,6 @@ def review_pull_request(
                 owner, repo, changed_file.filename, pr.head_sha
             )
         except GitHubAPIError as e:
-            # One file failing to fetch shouldn't kill the whole review.
-            # Skip it and continue with the others.
             report(f"  Could not fetch {changed_file.filename}: {e}")
             files_skipped += 1
             continue
@@ -131,21 +127,17 @@ def review_pull_request(
         try:
             findings = analyzer.analyze_source(contents, changed_file.filename)
         except SyntaxError:
-            # The file isn't valid Python. Could be a syntax error in the
-            # PR itself, or a .py file that's actually a template. Either
-            # way, skip rather than crash.
             report(f"  Skipping {changed_file.filename} (not valid Python)")
             files_skipped += 1
             continue
 
-        # Filter to only findings on lines this PR actually touched.
-        # This is the whole point of Phase 2: don't flag pre-existing
-        # issues the author didn't write.
         scoped = [f for f in findings if f.line in changed_file.changed_lines]
         all_findings.extend(scoped)
+        # Keep the source around so callers (especially the LLM enricher)
+        # can use it without re-fetching.
+        source_by_file[changed_file.filename] = contents
         files_analyzed += 1
 
-    # Sort findings for predictable, top-to-bottom output.
     all_findings.sort(key=lambda f: (f.file_path, f.line))
 
     return ReviewResult(
@@ -153,4 +145,5 @@ def review_pull_request(
         files_analyzed=files_analyzed,
         files_skipped=files_skipped,
         findings=all_findings,
+        source_by_file=source_by_file,
     )

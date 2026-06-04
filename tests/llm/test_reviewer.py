@@ -265,3 +265,95 @@ def test_fallback_priority_maps_from_severity():
     assert result[0].priority == "high"      # ERROR → high
     assert result[1].priority == "medium"    # WARNING → medium
     assert result[2].priority == "low"       # INFO → low
+
+
+# ---- Cache integration tests ----
+
+
+def test_cache_miss_calls_api_and_stores_response(tmp_path):
+    """On a cache miss, we should call the API and save the response."""
+    import json
+    from src.llm.cache import ResponseCache
+
+    response_text = json.dumps({
+        "enrichments": [{
+            "finding_id": "finding_0",
+            "priority": "low",
+            "explanation": "fresh from api",
+            "suggested_fix": "",
+        }]
+    })
+    client = _make_mock_client(response_text)
+    cache = ResponseCache(cache_dir=str(tmp_path / "cache"))
+
+    reviewer = LLMReviewer(client=client, cache=cache)
+    result = reviewer.enrich([_sample_finding()], {"test.py": "x = 1\n"})
+
+    # API was called once.
+    assert client.messages.create.call_count == 1
+    # Response is what came back from the API.
+    assert result[0].explanation == "fresh from api"
+
+    # The response should now be in the cache for next time.
+    # We verify by calling enrich again with the same inputs and
+    # confirming the API isn't hit a second time.
+    result2 = reviewer.enrich([_sample_finding()], {"test.py": "x = 1\n"})
+    assert client.messages.create.call_count == 1  # still 1, not 2
+    assert result2[0].explanation == "fresh from api"
+
+
+def test_cache_hit_skips_api_call(tmp_path):
+    """When the cache already has a value, we should NOT call the API."""
+    import json
+    from src.llm.cache import ResponseCache
+
+    cache = ResponseCache(cache_dir=str(tmp_path / "cache"))
+    client = _make_mock_client("never-used")
+
+    # Pre-populate the cache. We need to compute the same key the
+    # reviewer will compute, which means simulating what _serialize_findings
+    # and _build_code_context would produce.
+    reviewer_for_keys = LLMReviewer(client=client, cache=cache)
+    findings = [_sample_finding()]
+    source_by_file = {"test.py": "x = 1\n"}
+    findings_json = reviewer_for_keys._serialize_findings(findings)
+    code_context = reviewer_for_keys._build_code_context(findings, source_by_file)
+
+    pre_cached = json.dumps({
+        "enrichments": [{
+            "finding_id": "finding_0",
+            "priority": "medium",
+            "explanation": "from cache",
+            "suggested_fix": "",
+        }]
+    })
+    cache.set(cache.make_key(findings_json, code_context), pre_cached)
+
+    # Now use a fresh reviewer; cache hit means no API call.
+    reviewer = LLMReviewer(client=client, cache=cache)
+    result = reviewer.enrich(findings, source_by_file)
+
+    client.messages.create.assert_not_called()
+    assert result[0].explanation == "from cache"
+
+
+def test_no_cache_means_every_call_hits_api(tmp_path):
+    """Without a cache, identical requests should still hit the API."""
+    import json
+
+    response = json.dumps({
+        "enrichments": [{
+            "finding_id": "finding_0",
+            "priority": "low",
+            "explanation": "no cache",
+            "suggested_fix": "",
+        }]
+    })
+    client = _make_mock_client(response)
+
+    # No cache argument; every call should call the API.
+    reviewer = LLMReviewer(client=client)
+    reviewer.enrich([_sample_finding()], {"test.py": "x = 1\n"})
+    reviewer.enrich([_sample_finding()], {"test.py": "x = 1\n"})
+
+    assert client.messages.create.call_count == 2
