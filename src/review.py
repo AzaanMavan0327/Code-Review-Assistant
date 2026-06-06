@@ -16,8 +16,9 @@ The pipeline:
   4. Run the static analyzer on each file.
   5. Filter findings to only those on changed lines.
 
-The result includes the source code we fetched, so downstream consumers
-(like the LLM reviewer) don't have to re-fetch the same files.
+The result includes the source code we fetched plus the head commit SHA,
+so downstream consumers (LLM reviewer, comment poster) don't have to
+re-fetch anything.
 """
 
 from typing import Callable, Dict, List, Optional
@@ -28,7 +29,7 @@ from src.github.client import GitHubAPIError, GitHubClient
 from src.github.diff_parser import annotate_pull_request
 
 
-# Type alias for the progress callback. Takes a status message string.
+# Type alias for the progress callback.
 ProgressCallback = Callable[[str], None]
 
 
@@ -48,15 +49,19 @@ class ReviewResult:
         files_skipped: int,
         findings: List[Finding],
         source_by_file: Optional[Dict[str, str]] = None,
+        head_sha: str = "",
     ) -> None:
         self.pr_title = pr_title
         self.files_analyzed = files_analyzed
         self.files_skipped = files_skipped
         self.findings = findings
-        # Maps file path -> full source text. Used by LLM enrichment to
-        # extract code context around each finding. Defaults to {} so
-        # tests written before this field was added still work.
+        # Maps file path -> full source text. Used by LLM enrichment.
         self.source_by_file = source_by_file or {}
+        # SHA of the PR's head commit. The comment poster anchors comments
+        # to this specific commit so they stay correctly placed if the
+        # PR is later updated. Default "" preserves backwards compatibility
+        # with tests written before this field was added.
+        self.head_sha = head_sha
 
 
 def review_pull_request(
@@ -68,18 +73,6 @@ def review_pull_request(
 ) -> ReviewResult:
     """
     Run the full review pipeline on one pull request.
-
-    Args:
-        client: GitHubClient used for all API calls.
-        owner, repo, number: identifies the pull request.
-        progress: optional callback invoked with status messages.
-
-    Returns:
-        A ReviewResult containing all findings on changed lines.
-
-    Raises:
-        GitHubAPIError: if the PR cannot be fetched at all. Per-file errors
-                        are caught internally and result in skipped files.
     """
     def report(msg: str) -> None:
         if progress is not None:
@@ -97,6 +90,7 @@ def review_pull_request(
             files_skipped=0,
             findings=[],
             source_by_file={},
+            head_sha=pr.head_sha,
         )
 
     pr = annotate_pull_request(pr)
@@ -133,8 +127,6 @@ def review_pull_request(
 
         scoped = [f for f in findings if f.line in changed_file.changed_lines]
         all_findings.extend(scoped)
-        # Keep the source around so callers (especially the LLM enricher)
-        # can use it without re-fetching.
         source_by_file[changed_file.filename] = contents
         files_analyzed += 1
 
@@ -146,4 +138,5 @@ def review_pull_request(
         files_skipped=files_skipped,
         findings=all_findings,
         source_by_file=source_by_file,
+        head_sha=pr.head_sha,
     )
