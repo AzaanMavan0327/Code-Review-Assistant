@@ -1,0 +1,21 @@
+name: Code Review
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+
+    # The action needs to read PR contents and write review comments.
+    permissions:
+      pull-requests: write
+      contents: read
+
+    steps:
+      - uses: AzaanMavan0327/Code-Review-Assistant@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
