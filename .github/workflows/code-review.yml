@@ -14,7 +14,7 @@ jobs:
       contents: read
 
     steps:
-      - uses: AzaanMavan0327/Code-Review-Assistant@v1
+      - uses: AzaanMavan0327/Code-Review-Assistant@main
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
