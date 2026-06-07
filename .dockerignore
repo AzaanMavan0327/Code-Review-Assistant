@@ -1,0 +1,55 @@
+# Files and directories excluded from the Docker build context.
+#
+# Keeping the image small and the build fast: anything listed here
+# is not copied into the container, even if a Dockerfile COPY instruction
+# would otherwise include it.
+
+# Virtual environment - the container has its own Python.
+venv/
+.venv/
+
+# Secrets - must never be in the image.
+.env
+.env.local
+
+# Tests - not needed at runtime.
+tests/
+
+# Build / cache artifacts.
+.pytest_cache/
+.cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.coverage
+htmlcov/
+
+# IDE configuration.
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Git history.
+.git/
+.gitignore
+.gitattributes
+
+# Docker artifacts shouldn't be in the build context.
+Dockerfile
+.dockerignore
+
+# Documentation - not used at runtime.
+docs/
+README.md
+LICENSE
+
+# GitHub-specific files.
+.github/
+
+# Dev-only dependencies and configs.
+requirements-dev.txt
+pytest.ini
+pyproject.toml

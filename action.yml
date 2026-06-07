@@ -1,0 +1,41 @@
+# GitHub Action manifest.
+#
+# This file is what tells GitHub "this repo is a GitHub Action, and
+# here's how to invoke it." Other repos consume the action by adding
+# a workflow file that references AzaanMavan0327/Code-Review-Assistant.
+#
+# Schema docs: https://docs.github.com/en/actions/creating-actions/metadata-syntax-for-github-actions
+
+name: 'Code Review Assistant'
+description: 'AI-powered static analysis for Python pull requests. Detects bugs, security issues, and complexity problems, then posts findings as inline review comments.'
+author: 'Azaan Mavan'
+
+# Marketplace branding. 'eye' is one of the Feather icons GitHub supports
+# for actions, and blue is a calm color that won't clash with most repo themes.
+# See: https://docs.github.com/en/actions/creating-actions/metadata-syntax-for-github-actions#brandingicon
+branding:
+  icon: 'eye'
+  color: 'blue'
+
+# Inputs callers can configure in their workflow. GitHub surfaces each
+# input to the container as an INPUT_<UPPERCASE_NAME> environment variable.
+# Our runner.py reads INPUT_ANTHROPIC_API_KEY.
+inputs:
+  anthropic_api_key:
+    description: >
+      Optional Anthropic API key. When provided, each finding includes an
+      LLM-generated explanation and suggested fix. When omitted, plain
+      static-analysis findings are posted instead.
+    required: false
+    default: ''
+
+# How the action runs. We use Docker so dependencies are fully isolated
+# and reproducible: GitHub builds the image from our Dockerfile every
+# time the action runs.
+#
+# Once the action is stable, we'd publish a pre-built image to a
+# container registry and reference it here for faster startup. For now,
+# building from Dockerfile keeps things simple.
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
